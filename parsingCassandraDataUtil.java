@@ -1,4 +1,4 @@
-package com.canssandra;
+package com.whaty.util;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -19,6 +19,7 @@ import org.apache.cassandra.thrift.InvalidRequestException;
 import org.apache.cassandra.thrift.NotFoundException;
 import org.apache.cassandra.thrift.SlicePredicate;
 import org.apache.cassandra.thrift.SliceRange;
+import org.apache.cassandra.thrift.SuperColumn;
 import org.apache.cassandra.thrift.TimedOutException;
 import org.apache.cassandra.thrift.UnavailableException;
 import org.apache.thrift.TException;
@@ -28,15 +29,18 @@ import org.apache.thrift.transport.TFramedTransport;
 import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
 
-/*
- * author wenbin
- * date 2013-05-01
- */
+import com.whaty.util.SpringUtil;
+import com.whaty.platform.entity.exception.EntityException;
+import com.whaty.platform.entity.service.GeneralService;
+
 public class parsingCassandraDataUtil {
 
+	// private static final String KEYSPACE = "webtrn_study_log";
+	// public static final String COLUMNFAMILY = "SCORM_STU_SCO";
+	public final static String HOST = "192.168.20.103";
 	private static final String KEYSPACE = "demo";
 	public static final String COLUMNFAMILY = "pt";
-	// public static final String SUPER_COLUMN = "pt";
+
 	private static Cassandra.Client client = null;
 
 	public static void connectCassandra() throws TException,
@@ -44,16 +48,15 @@ public class parsingCassandraDataUtil {
 			UnsupportedEncodingException, NotFoundException, TimedOutException {
 
 		// 包装好的socket
-		TTransport tr = new TFramedTransport(
-				new TSocket("192.168.20.103", 9160));
+		TTransport tr = new TFramedTransport(new TSocket(HOST, 9160));
 		TProtocol proto = new TBinaryProtocol(tr);
 		client = new Cassandra.Client(proto);
 		tr.open();
 		if (!tr.isOpen()) {
-			System.out.println("failed to connect server!");
+			System.out.println("Failed to connect server!");
 			return;
 		} else {
-			System.out.println("success to connect server!");
+			System.out.println("Success to connect server!");
 		}
 	}
 
@@ -65,20 +68,22 @@ public class parsingCassandraDataUtil {
 			client.set_keyspace(KEYSPACE);
 			// ColumnPath path = new ColumnPath(COLUMNFAMILY);
 			// path.setSuper_column(SUPER_COLUMN.getBytes());
-			ColumnParent parent = new ColumnParent(COLUMNFAMILY);// 表名，column
+			ColumnParent parent = new ColumnParent(COLUMNFAMILY);// ����column
+			// parent.
 			SlicePredicate predicate = new SlicePredicate();
 			SliceRange sliceRange = new SliceRange(toByteBuffer(""),
 					toByteBuffer(""), false, 10);
 			predicate.setSlice_range(sliceRange);
 			List<ByteBuffer> keys = new ArrayList<ByteBuffer>();
-			String key_user_id = "a";
-			
-			for (int i = 0; i < 100000; i++) {
-				String k = key_user_id + i;// key
+			String studentId = "c";
+
+			// key的获取最为关键
+
+			for (int i = 0; i <= 100; i++) {
+				String k = studentId + i;// key
 				keys.add(toByteBuffer(k));
 			}
-			
-			// 获取SUPER_COLUMN下的所有元素：---关键：keys的准备与设置
+			// 获取COLUMN 或者 SUPER_COLUMN下的所有元素：
 			Map<ByteBuffer, List<ColumnOrSuperColumn>> res = client
 					.multiget_slice(keys, parent, predicate,
 							ConsistencyLevel.ONE);
@@ -87,7 +92,7 @@ public class parsingCassandraDataUtil {
 	}
 
 	/*
-	 * 处理ColumnOrSuperColumn MAP
+	 * 处理ColumnOrSuperColumn MAP, 数据结构为： "  key : 元素为ColumnOrSuperColumn的List "
 	 */
 	public static void iteratorColumnOrSuperColumnMap(
 			Map<ByteBuffer, List<ColumnOrSuperColumn>> res) throws IOException {
@@ -99,31 +104,103 @@ public class parsingCassandraDataUtil {
 		while (its.hasNext()) {
 			ByteBuffer itsk = its.next();
 			List<ColumnOrSuperColumn> slt = t.get(itsk);
-			System.out.print(toString(itsk) + " ** ");
-			iteratorColumnOrSuperColumnList(slt);
-			System.out.println();
+			// System.out.print(toString(itsk) + " ** ");
+			iteratorColumnOrSuperColumnList(itsk, slt);
+			// System.out.println();
 		}
 	}
 
 	/*
-	 * 遍历返回的ColumnOrSuperColumn List,插入带数据库中
+	 * 处理 ColumnOrSuperColumnList
 	 */
-	public static void iteratorColumnOrSuperColumnList(
+	public static void iteratorColumnOrSuperColumnList(ByteBuffer keyName,
 			List<ColumnOrSuperColumn> tmp) throws UnsupportedEncodingException {
 		if (null == tmp || tmp.size() == 0) {
 			return;
 		}
+		//最外面的  key名
+		String KeyName = toString(keyName);
+
 		for (ColumnOrSuperColumn result : tmp) {
-			Column column = result.column;
-			String cname = toString(column.name);
-			String cvalue = toString(column.value);
-			System.out.print(cname + ":" + cvalue);
-			System.out.print(" ** ");
+			// 解析key对应的column list中的Supercolumn
+			if (result.isSetSuper_column()) {
+				SuperColumn sc = result.super_column;
+				//supercolumn 的key名
+				String SuperColumnsKeyName = new String(sc.getName());
+				Iterator<Column> cit = sc.getColumnsIterator();
+				while (cit.hasNext()) {
+					Column column = cit.next();
+					parseSuperColumnSingleColumn(KeyName, SuperColumnsKeyName,
+							column);
+				}
+			}
+			// 解析key对应的column list中的column
+			if (result.isSetColumn()) {
+//				Column column = result.column;
+//				column.getName();
+//				parseSingleColumn(KeyName, column);
+			}
+
 		}
 	}
 
+	// 解析 SuperColumn中 单个 column元素 ,并存到 Mysql中对应的表中
+	public static void parseSuperColumnSingleColumn(String KeyName,
+			String SuperKeyName, Column column)
+			throws UnsupportedEncodingException {
+		if (null == column) {
+			return;
+		}
+		GeneralService generalService = (GeneralService) SpringUtil
+				.getBean("generalService");
+		String name = toString(column.name);
+		String value = toString(column.value);
+		// DataUtil.insertData(name,KeyName,SuperKeyName,value);
+		// 数据库中字段分别为keyName，
+		// superkeyName，不定字段name（上面column的name值，对应的值为上面的value）；
+		// insert into scorm_stu_sco(keyName,superkeyName,name)
+		// values(KeyName,SuperKeyName,value)
+		
+		//String insertSql = "insert into scorm_stu_sco(keyName,superKeyName,"+name+") values("+KeyName+","+SuperKeyName+","+value+")";
+		
+	 	 //String updateSql ="update scorm_stu_sco set name="+value+" where id='"+item[10]+"'";
+		
+//		try {
+//		//	generalService.executeBySQL(updateSql);
+//		} catch (EntityException e) {
+//			e.printStackTrace();
+//		}
+		System.out.print(KeyName + "  " + SuperKeyName + "  " + name + ":"
+				+ value);
+		System.out.println();
+	}
+
+	// 解析 columns中的column元素
+	public static void parseSingleColumn(String keyName, Column column)
+			throws UnsupportedEncodingException {
+		if (null == column) {
+			return;
+		}
+		String name = toString(column.name);
+		String value = toString(column.value);
+		System.out.print(keyName + " " + name + ":" + value);
+		System.out.print("\r\n");
+	}
+
+	// 最初的 解析 单个 column元素
+	public static void parseSingleColumn(Column column)
+			throws UnsupportedEncodingException {
+		if (null == column) {
+			return;
+		}
+		String name = toString(column.name);
+		String value = toString(column.value);
+		System.out.print(name + ":" + value);
+		System.out.print(" ## ");
+	}
+
 	/*
-	 * String转换为bytebuffer，以便插入cassandra
+	 * String to bytebuffer
 	 */
 	public static ByteBuffer toByteBuffer(String value)
 			throws UnsupportedEncodingException {
@@ -131,8 +208,9 @@ public class parsingCassandraDataUtil {
 	}
 
 	/*
-	 * bytebuffer转换为String
+	 * bytebuffer to String
 	 */
+
 	public static String toString(ByteBuffer buffer)
 			throws UnsupportedEncodingException {
 		byte[] bytes = new byte[buffer.remaining()];
@@ -144,7 +222,6 @@ public class parsingCassandraDataUtil {
 			InvalidRequestException, UnavailableException, NotFoundException,
 			TimedOutException, IOException {
 		process();
-
 	}
 
 }

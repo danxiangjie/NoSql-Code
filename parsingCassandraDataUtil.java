@@ -35,9 +35,7 @@ import com.whaty.platform.entity.service.GeneralService;
 
 public class parsingCassandraDataUtil {
 
-	// private static final String KEYSPACE = "webtrn_study_log";
-	// public static final String COLUMNFAMILY = "SCORM_STU_SCO";
-	public final static String HOST = "192.168.20.103";
+	public final static String HOST = "192.168.*.*";
 	private static final String KEYSPACE = "demo";
 	public static final String COLUMNFAMILY = "pt";
 

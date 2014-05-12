@@ -33,6 +33,10 @@ import com.whaty.util.SpringUtil;
 import com.whaty.platform.entity.exception.EntityException;
 import com.whaty.platform.entity.service.GeneralService;
 
+/*
+ * Cassandra 解析工具类
+ * 
+/
 public class parsingCassandraDataUtil {
 
 	public final static String HOST = "192.168.*.*";
